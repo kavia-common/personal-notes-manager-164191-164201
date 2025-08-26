@@ -2,10 +2,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 import os
+import logging
 
-from .db import Base, engine
+from .db import Base, get_engine
 from .models import Note  # noqa: F401  # Ensure model is imported so metadata includes it
 from .routers_notes import router as notes_router
+
+# Configure basic logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("notes_backend")
 
 openapi_tags = [
     {"name": "Health", "description": "Service health and diagnostics"},
@@ -51,11 +56,17 @@ app.add_middleware(
 )
 
 # Initialize database schema (idempotent). In production consider alembic.
+# We attempt to create the tables if DB configuration is present. If not, we log and continue.
 try:
+    engine = get_engine()
     Base.metadata.create_all(bind=engine)
-except SQLAlchemyError:
-    # Let app start; individual requests will return clear DB errors if config is wrong.
-    pass
+    logger.info("Database schema ensured.")
+except RuntimeError as e:
+    # Likely missing env vars; keep the app running for health and docs.
+    logger.warning(f"Database not configured at startup: {e}")
+except SQLAlchemyError as e:
+    # DB might be unreachable; keep app up to allow health checks and later retries.
+    logger.error(f"Failed to initialize database schema: {e}")
 
 
 @app.get(

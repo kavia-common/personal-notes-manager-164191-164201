@@ -23,17 +23,17 @@ def _build_mysql_url() -> URL:
 
     # Prefer a full DSN if provided (e.g., mysql+pymysql://user:pass@host:3306/dbname)
     if mysql_url:
+        # If a full DSN string is provided, create URL from string
         return URL.create(mysql_url)
 
+    # If required discrete parts are missing, we can't connect to MySQL. Defer raising until first DB use.
     if not (mysql_user and mysql_password and mysql_db):
         raise RuntimeError(
             "Database configuration missing. Please set either MYSQL_URL or all of "
             "MYSQL_USER, MYSQL_PASSWORD, MYSQL_DB, and optionally MYSQL_PORT."
         )
 
-    host = "localhost"
-    # Allow MYSQL_URL to just be host if others provided, but we used empty -> fallback.
-    # If MYSQL_URL was empty, we keep default host. If MYSQL_URL contains a host only (rare), ignore.
+    host = os.getenv("MYSQL_HOST", "localhost").strip() or "localhost"
     try:
         port: Optional[int] = int(mysql_port) if mysql_port else 3306
     except ValueError:
@@ -50,21 +50,52 @@ def _build_mysql_url() -> URL:
     )
 
 
-# Create engine and session factory
-DATABASE_URL = _build_mysql_url()
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
-    pool_recycle=280,
-)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Lazily initialized engine/session to avoid import-time failures when env is missing.
+_engine = None
+_SessionLocal = None
+
+
+def _ensure_engine():
+    """Create the engine and session factory once, when first needed."""
+    global _engine, _SessionLocal
+    if _engine is not None and _SessionLocal is not None:
+        return
+    # Attempt to build URL; this may raise if env is missing. We let request/startup handlers catch that.
+    database_url = _build_mysql_url()
+    _engine = create_engine(
+        database_url,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+        pool_recycle=280,
+    )
+    _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
+
+
+# PUBLIC_INTERFACE
+def get_engine():
+    """Return the SQLAlchemy engine, initializing it if necessary."""
+    _ensure_engine()
+    return _engine
+
+
+# PUBLIC_INTERFACE
+def get_session_factory():
+    """Return the SQLAlchemy session factory, initializing it if necessary."""
+    _ensure_engine()
+    return _SessionLocal
 
 
 # PUBLIC_INTERFACE
 def get_db() -> Generator[Session, None, None]:
-    """Dependency that provides a SQLAlchemy session per request."""
+    """Dependency that provides a SQLAlchemy session per request.
+
+    This defers session creation until the first actual request, avoiding application
+    import-time crashes when DB env vars are not set. If configuration is invalid,
+    a SQLAlchemyError or RuntimeError may be raised on first request.
+    """
+    # Initialize engine/session lazily
+    SessionLocal = get_session_factory()
     db: Session = SessionLocal()
     try:
         yield db
@@ -72,4 +103,5 @@ def get_db() -> Generator[Session, None, None]:
         try:
             db.close()
         except SQLAlchemyError:
+            # Swallow close errors to avoid masking underlying issues.
             pass
