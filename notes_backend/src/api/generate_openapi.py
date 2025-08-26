@@ -3,6 +3,11 @@ import os
 
 from src.api.main import app
 
+"""
+Utility to dump the OpenAPI schema from the FastAPI application into interfaces/openapi.json
+for interface discovery by dependent containers.
+"""
+
 # Get the OpenAPI schema
 openapi_schema = app.openapi()
 
