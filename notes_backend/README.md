@@ -15,7 +15,16 @@ Note: The host defaults to `localhost` when `MYSQL_URL` is not provided. If your
 
 ## Running
 - Install dependencies from `requirements.txt`.
-- Start the app with `uvicorn src.api.main:app --host 0.0.0.0 --port 8000`.
+- Start the app with `uvicorn src.api.main:app --host 0.0.0.0 --port 3001` (recommended to match frontend default)
+  - Or set your preferred port; ensure the frontend `REACT_APP_API_BASE_URL` matches.
+
+## CORS
+- Configure allowed origins using environment variable `ALLOWED_ORIGINS` (comma-separated).
+  - Defaults to `http://localhost:3000,http://127.0.0.1:3000`.
+- Example:
+  ```
+  ALLOWED_ORIGINS=http://localhost:3000
+  ```
 
 ## API
 Interactive docs are available at `/docs` and `/redoc`.
